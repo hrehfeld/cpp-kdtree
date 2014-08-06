@@ -105,43 +105,12 @@ namespace spatial {
 
 		};
 
-		struct Leaf
+		struct Leaf : public std::vector<T3D>
 		{
-			std::vector<T3D> bucket;
-
 			Leaf(int bucketsize)
 			{
-				bucket.reserve(bucketsize);
+				reserve(bucketsize);
 			}
-
-
-			bool IsLeaf() const { return true; }
-
-
-
-
-
-
-			bool Add(T3D const& p, int bucketsize /*Tree & tree*/)
-			{
-				//we already increased bucketsize, so account for that
-				while (bucket.size() >= bucketsize)
-				{
-					bucketsize *= 2;
-				}
-
-				bucket.push_back(p);
-
-				//dont need to split
-				if (bucket.size() < bucketsize)
-				{
-					return true;
-				}
-				return false;
-			}
-
-
-
 		};
 
 		struct Stem
@@ -174,7 +143,7 @@ namespace spatial {
 				, splitValue(splitValue)
 			{
 				assert(ileaf.is_leaf());
-				assert(leaf.bucket.size() % bucketsize == 0);
+				assert(leaf.size() % bucketsize == 1);
 
 
 				
@@ -183,15 +152,15 @@ namespace spatial {
 				children[1] = Index::make_leaf(leafs.size());
 				leafs.emplace_back(bucketsize);
 
-				auto const old = leaf.bucket;
+				auto const old = leaf;
 
-				leaf.bucket.clear();
+				leaf.clear();
 				//move bucket contents into children
 				for (auto const& p: old)
 				{
 					auto const c = int(is_upper(p));
 					auto& child = children[c];
-					leafs[child.from_leaf()].bucket.emplace_back(::std::move(p));
+					leafs[child.from_leaf()].emplace_back(::std::move(p));
 				}
 			}
 
@@ -246,20 +215,28 @@ namespace spatial {
 				if (child.is_leaf())
 				{
 					auto& leaf = leafs[child.from_leaf()];
+					auto& bucket = leaf;
+					//we already increased bucketsize
+					while (bucket.size() > bucketsize)
+					{
+						//so account for that
+						bucketsize *= 2;
+					}
+					bucket.push_back(p);
 
-					auto needs_split = !leaf.Add(p, bucketsize);
+					auto needs_split = (bucket.size() > bucketsize);
 					if (needs_split)
 					{
 						//we need to split
-						assert(leaf.bucket.size() >= bucketsize);
+						assert(bucket.size() >= bucketsize);
 
 						T range;
 
-						T3D bmin = leaf.bucket[0];
-						T3D bmax = leaf.bucket[0];
-						for (int i = 1; i < leaf.bucket.size(); ++i)
+						T3D bmin = bucket[0];
+						T3D bmax = bucket[0];
+						for (int i = 1; i < bucket.size(); ++i)
 						{
-							auto const& x = leaf.bucket[i];
+							auto const& x = bucket[i];
 							bmin = min(x, bmin);
 							bmax = max(x, bmax);
 						}
@@ -456,11 +433,11 @@ namespace spatial {
 
 			static inline int search_leaf(T3D const& p, Leaf const& leaf, T& minDist, T3D& nearest)
 			{
-				//assert(leaf.bucket.size() <= tree->bucketsize);
+				//assert(leaf.size() <= tree->bucketsize);
 				int nearestI = -1;
 
 				int i = 0;
-				for (auto& o : leaf.bucket)
+				for (auto& o : leaf)
 				{
 					auto dist = distance(p, o);
 
@@ -473,7 +450,7 @@ namespace spatial {
 				}
 				if (nearestI >= 0)
 				{
-					nearest = leaf.bucket[nearestI];
+					nearest = leaf[nearestI];
 				}
 				return nearestI;
 			}
