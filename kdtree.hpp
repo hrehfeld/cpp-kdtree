@@ -107,53 +107,23 @@ namespace spatial {
 
 		struct Leaf
 		{
-			// Bounds are only ever used when splitting
-			T3D bounds[2];
 			std::vector<T3D> bucket;
 
 			Leaf(int bucketsize)
 			{
-				bounds[0] = bounds[1] = 0;
-
 				bucket.reserve(bucketsize);
 			}
 
-			inline void InitBounds(T3D const& p)
-			{
-				bounds[0] = p;
-				bounds[1] = p;
-			}
-			inline void UpdateBounds(T3D const& p)
-			{
-				//other code in Leaf::Add() relies on bounds[1] being >= bounds[0] to save abs
-				bounds[0] = min(p, bounds[0]);
-				bounds[1] = max(p, bounds[1]);
-			}
 
 			bool IsLeaf() const { return true; }
 
 
 
 
-			inline int GetSplitAxis(T& range)
-			{
-				T3D extend = bounds[1] - bounds[0];
-				int axis = 0;
-				range = extend[0];
-				for (int i = 1; i < D; ++i) {
-					if (extend[i] > range) {
-						axis = i;
-						range = extend[i];
-					}
-				}
-				return axis;
-			}
+
 
 			bool Add(T3D const& p, int bucketsize /*Tree & tree*/)
 			{
-				bucket.empty() ?
-					InitBounds(p) : UpdateBounds(p);
-
 				//we already increased bucketsize, so account for that
 				while (bucket.size() >= bucketsize)
 				{
@@ -176,8 +146,8 @@ namespace spatial {
 
 		struct Stem
 		{
-			T splitValue;
 			int splitAxis;
+			T splitValue;
 
 			Index children[2];
 
@@ -193,7 +163,7 @@ namespace spatial {
 
 			/** split a leaf node */
 			Stem(int const splitAxis
-				, T const range
+				, T const splitValue
 				, Leaf& leaf
 				, Index const ileaf
 				, int const bucketsize
@@ -201,13 +171,11 @@ namespace spatial {
 				, ::std::vector<Leaf>& leafs
 				)
 				: splitAxis(splitAxis)
+				, splitValue(splitValue)
 			{
 				assert(ileaf.is_leaf());
 				assert(leaf.bucket.size() % bucketsize == 0);
 
-				splitValue = leaf.bounds[0][splitAxis] + range / T(2);
-				assert(splitValue > leaf.bounds[0][splitAxis]);
-				assert(splitValue < leaf.bounds[1][splitAxis]);
 
 				
 				//use old leaf as left child
@@ -254,6 +222,20 @@ namespace spatial {
 
 			}
 
+			static inline int GetSplitAxis(T3D const& bmin, T3D const& bmax, T& range)
+			{
+				auto extend = bmax - bmin;
+				int axis = 0;
+				range = extend[0];
+				for (int i = 1; i < D; ++i) {
+					if (extend[i] > range) {
+						axis = i;
+						range = extend[i];
+					}
+				}
+				return axis;
+			}
+
 			static inline void add(
 				T3D const& p
 				, Index& child
@@ -272,14 +254,28 @@ namespace spatial {
 						assert(leaf.bucket.size() >= bucketsize);
 
 						T range;
-						auto const splitAxis = leaf.GetSplitAxis(range);
+
+						T3D bmin = leaf.bucket[0];
+						T3D bmax = leaf.bucket[0];
+						for (int i = 1; i < leaf.bucket.size(); ++i)
+						{
+							auto const& x = leaf.bucket[i];
+							bmin = min(x, bmin);
+							bmax = max(x, bmax);
+						}
+
+						auto const splitAxis = GetSplitAxis(bmin, bmax, range);
 						//only split if points extend in some direction at least EPSILON
 						if (range > ::std::numeric_limits<T>::epsilon())
 						{
 							auto const ileaf = child;
 							child = Index::make_stem(stems.size());
 
-							stems.emplace_back(splitAxis, range, leaf, ileaf, bucketsize, stems, leafs); //make new stem
+							auto splitValue = bmin[splitAxis] + range / T(2);
+							assert(splitValue > bmin[splitAxis]);
+							assert(splitValue < bmax[splitAxis]);
+
+							stems.emplace_back(splitAxis, splitValue, leaf, ileaf, bucketsize, stems, leafs); //make new stem
 						}
 						//otherwise just keep this leaf
 					}
