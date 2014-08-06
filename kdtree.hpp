@@ -123,10 +123,6 @@ namespace spatial {
 				bucket.reserve(bucketsize);
 			}
 
-			inline int GetSize() const {
-				return bucket.size();
-			}
-
 			inline void InitBounds(T3D const& p)
 			{
 				bounds[0] = p;
@@ -169,7 +165,7 @@ namespace spatial {
 				bucket.push_back(p);
 
 				//dont need to split
-				if (GetSize() < tree.bucketsize)
+				if (bucket.size() < tree.bucketsize)
 				{
 					return;
 				}
