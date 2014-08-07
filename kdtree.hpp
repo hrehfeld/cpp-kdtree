@@ -52,9 +52,9 @@ namespace spatial {
 		}
 	}
 
-	template<int D, typename T, typename T3D>
+	template<int D, typename T, typename T3D, typename SearchResult>
 	class KdTree {
-		typedef KdTree<D, T, T3D> Tree;
+		typedef KdTree<D, T, T3D, SearchResult> Tree;
 		typedef Tree Self;
 
 		struct Index
@@ -139,7 +139,7 @@ namespace spatial {
 			inline auto end()         -> decltype(bucket.end  ())    { return bucket.end(); }
 
 			Leaf(Leaf&& o)
-				: bucket(::std::move(bucket))
+				: bucket(::std::move(o.bucket))
 			{
 			}
 
@@ -189,17 +189,17 @@ namespace spatial {
 				leafs.emplace_back(bucketsize);
 
 				auto const old = ::std::move(leaf);
+				assert(leaf.size() == 0);
+				assert(old.size() % bucketsize == 1);
 
 
 				//move bucket contents into children
 				for (auto& p: old)
 				{
-					auto const c = int(is_upper(p));
-					auto& child = children[c];
-					leafs[child.from_leaf()].push_back(::std::move(p));
+					leafs[get_index(p).from_leaf()].push_back(::std::move(p));
 				}
-
-				assert(leafs.size() == stems.size() + 1);
+				assert(leafs[children[0].from_leaf()].size());
+				assert(leafs[children[1].from_leaf()].size());
 			}
 
 			~Stem() 
@@ -216,17 +216,16 @@ namespace spatial {
 			}
 
 
+			inline Index& get_index(T3D const& p)
+			{
+				return children[is_upper(p)];
+			}
 
 			inline bool is_upper(T3D const& p) const { return p[splitAxis] > splitValue; }
-			bool IsLeaf() const { return false; }
 
 			void Add(T3D const& p, int bucketsize, ::std::vector<Stem>& stems, ::std::vector<Leaf>& leafs)
 			{
-				auto const c = int(is_upper(p));
-				auto& child = children[c];
-
-				add(p, child, bucketsize, stems, leafs);
-
+				add(p, get_index(p), bucketsize, stems, leafs);
 			}
 
 			static inline int GetSplitAxis(T3D const& bmin, T3D const& bmax, T& range)
@@ -291,6 +290,8 @@ namespace spatial {
 							assert(splitValue < bmax[splitAxis]);
 
 							stems.emplace_back(splitAxis, splitValue, leaf, ileaf, bucketsize, stems, leafs); //make new stem
+							assert(leafs.size() == stems.size() + 1);
+
 						}
 						//otherwise just keep this leaf
 					}
@@ -379,15 +380,25 @@ namespace spatial {
 			//	return
 			//}
 
-			T3D NearestNeighbour(T3D const& p, T minDist = ::std::numeric_limits<T>::max()) const
+			template <class ResultIt, class DistFun>
+			int NearestNeighbour(T3D const& p
+				, ResultIt const& begin
+				, ResultIt        end
+				, ResultIt const& end_allocated
+				, DistFun const& distFun
+				, T const max_distance = ::std::numeric_limits<T>::max()
+				) const
 			{
-				T3D nearest;
+				auto minDist = max_distance;
+
+				auto const get_leaf = [=](Index i) { return tree->leafs[i.from_leaf()]; };
 
 				if (tree->child.is_leaf())
 				{
-					int i = search_leaf(p, tree->leafs[tree->child.from_leaf()], minDist, nearest);
-					return nearest;
+					return search_leaf(p, get_leaf(tree->child), minDist, begin, end, end_allocated, distFun);
 				}
+
+				int num_matches { 0 };
 
 				std::vector<Stem const*> stack;
 				stack.reserve(256);
@@ -411,7 +422,7 @@ namespace spatial {
 
 						if (furthestChild.is_leaf())
 						{
-							int i = search_leaf(p, tree->leafs[furthestChild.from_leaf()], minDist, nearest);
+							num_matches += search_leaf(p, get_leaf(furthestChild), minDist, begin, end, end_allocated, distFun);
 						}
 						else
 						{
@@ -424,7 +435,7 @@ namespace spatial {
 
 						if (nearestChild.is_leaf())
 						{
-							int i = search_leaf(p, tree->leafs[nearestChild.from_leaf()], minDist, nearest);
+							num_matches += search_leaf(p, get_leaf(nearestChild), minDist, begin, end, end_allocated, distFun);
 						}
 						else
 						{
@@ -433,7 +444,7 @@ namespace spatial {
 						}
 					}
 				}
-				return nearest;
+				return num_matches;
 
 #if 0
 				auto curNode = this;
@@ -470,34 +481,46 @@ namespace spatial {
 				}
 #endif
 			}
-
-			static inline int search_leaf(T3D const& p, Leaf const& leaf, T& minDist, T3D& nearest)
+			template <class ResultIt, class DistFun>
+			static inline int search_leaf(
+				T3D const& p
+				, Leaf const& leaf
+				, T minDist
+				, ResultIt const& begin
+				, ResultIt      & end
+				, ResultIt const& end_allocated
+				, DistFun const& distFun
+				)
 			{
+				int num_matches{ 0 };
 				//assert(leaf.size() <= tree->bucketsize);
-				int nearestI = -1;
-
-				int i = 0;
-				for (auto& o : leaf)
+				for (int i = 0; i < leaf.size(); ++i)
 				{
+					auto const& o = leaf[i];
 					auto dist = distance(p, o);
 
 					if (dist < minDist) {
-						minDist = dist;
-						nearestI = i;
+						//search for lowbound in valid matches
+						auto const lower = ::std::lower_bound(
+							::boost::make_transform_iterator(begin, distFun)
+							, ::boost::make_transform_iterator(end, distFun)
+							, dist).base();
+						if (lower != end_allocated)
+						{
+							auto const& end_ref = (end != end_allocated) ? end + 1 : end_allocated;
+							::std::move_backward(lower, end_ref - 1, end_ref);
+							end = end_ref;
+							*lower = ::std::iterator_traits<ResultIt>::value_type(o, dist);
+							++num_matches;
+						}
 					}
-
-					++i;
 				}
-				if (nearestI >= 0)
-				{
-					nearest = leaf[nearestI];
-				}
-				return nearestI;
+				return num_matches;
 			}
 
 			Self(Self&& o)
-				: tree(o.tree)
-				, searchMem(o.searchMem)
+				: tree(::std::move(o.tree))
+				, searchMem(::std::move(o.searchMem))
 			{
 			}
 
