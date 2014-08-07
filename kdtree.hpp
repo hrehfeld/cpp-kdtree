@@ -105,11 +105,47 @@ namespace spatial {
 
 		};
 
-		struct Leaf : public std::vector<T3D>
+		struct Leaf
 		{
+			::std::vector<T3D> bucket;
 			Leaf(int bucketsize)
 			{
-				reserve(bucketsize);
+				bucket.reserve(bucketsize);
+			}
+
+			inline int size() const
+			{
+				return int(bucket.size());
+			}
+
+			inline void push_back(T3D const& e)
+			{
+				bucket.push_back(e);
+			}
+
+			inline T3D const& operator[](int i) const
+			{
+				return const_cast<Leaf*>(this)->operator[](i);
+			}
+
+			inline T3D& operator[](int i)
+			{
+				return bucket[i];
+			}
+
+			inline auto begin() const -> decltype(bucket.begin())    { return bucket.begin(); }
+			inline auto end()   const -> decltype(bucket.end  ())    { return bucket.end(); }
+			inline auto begin()       -> decltype(bucket.begin())    { return bucket.begin(); }
+			inline auto end()         -> decltype(bucket.end  ())    { return bucket.end(); }
+
+			Leaf(Leaf&& o)
+				: bucket(::std::move(bucket))
+			{
+			}
+
+			Leaf& operator=(Leaf&& o)
+			{
+				::std::swap(bucket, o.bucket);
 			}
 		};
 
@@ -152,16 +188,18 @@ namespace spatial {
 				children[1] = Index::make_leaf(leafs.size());
 				leafs.emplace_back(bucketsize);
 
-				auto const old = leaf;
+				auto const old = ::std::move(leaf);
 
-				leaf.clear();
+
 				//move bucket contents into children
-				for (auto const& p: old)
+				for (auto& p: old)
 				{
 					auto const c = int(is_upper(p));
 					auto& child = children[c];
-					leafs[child.from_leaf()].emplace_back(::std::move(p));
+					leafs[child.from_leaf()].push_back(::std::move(p));
 				}
+
+				assert(leafs.size() == stems.size() + 1);
 			}
 
 			~Stem() 
@@ -294,7 +332,9 @@ namespace spatial {
 
 		void Add(T3D const& p)
 		{
+			assert(leafs.size() == stems.size() + 1);
 			Stem::add(p, child, bucketsize, stems, leafs);
+			assert(leafs.size() == stems.size() + 1);
 		}
 
 		Self(Self&& o)
