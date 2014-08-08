@@ -2,7 +2,7 @@
 #include <numeric>
 namespace spatial {
 
-	namespace helper {
+	namespace detail {
 		template <typename T>
 		int MinIndex(T const* const seq, int const length, int N, int* minIndex, T* min) {
 			for (int i = 0; i < N; ++i)
@@ -50,12 +50,115 @@ namespace spatial {
 
 			MinIndex<float>(distances, length, N, nearestI, minDist);
 		}
+
+		template<int D, class T, class T3D, class Data, class SearchResult>
+		struct Leaf
+		{
+			::std::vector<T3D> bucket;
+			::std::vector<Data> data_bucket;
+
+			Leaf(int bucketsize)
+			{
+				bucket.reserve(bucketsize);
+				data_bucket.reserve(bucketsize);
+			}
+
+			inline int size() const
+			{
+				assert(bucket.size() == data_bucket.size());
+				return int(bucket.size());
+			}
+
+			inline void push_back(T3D const& e, Data const& d)
+			{
+				bucket.push_back(e);
+				data_bucket.push_back(d);
+			}
+
+			inline T3D const& operator[](int i) const
+			{
+				return const_cast<Leaf*>(this)->operator[](i);
+			}
+
+			inline T3D& operator[](int i)
+			{
+				return bucket[i];
+			}
+
+			inline Data const& data(int i) const
+			{
+				return const_cast<Leaf*>(this)->data(i);
+			}
+			inline Data& data(int i)
+			{
+				return data_bucket[i];
+			}
+
+			inline auto begin() const -> decltype(bucket.begin())    { return bucket.begin(); }
+			inline auto end()   const -> decltype(bucket.end())    { return bucket.end(); }
+			inline auto begin()       -> decltype(bucket.begin())    { return bucket.begin(); }
+			inline auto end()         -> decltype(bucket.end())    { return bucket.end(); }
+
+			Leaf(Leaf&& o)
+				: bucket(::std::move(o.bucket))
+				, data_bucket(::std::move(o.data_bucket))
+			{
+			}
+
+			Leaf& operator=(Leaf&& o)
+			{
+				::std::swap(bucket, o.bucket);
+				::std::swap(data_bucket, o.data_bucket);
+			}
+
+			template <class ResultIt, class DistFun>
+			inline int search(
+				T3D const& p
+				, T minDist
+				, ResultIt const& begin
+				, ResultIt      & end
+				, ResultIt const& end_allocated
+				, DistFun const& distFun
+				) const
+			{
+				int num_matches{ 0 };
+				auto const& leaf = *this;
+				//assert(leaf.size() <= tree->bucketsize);
+				for (int i = 0; i < leaf.size(); ++i)
+				{
+					auto const& o = leaf[i];
+					auto dist = distance(p, o);
+
+					if (dist < minDist) {
+						//search for lowbound in valid matches
+						auto const lower = ::std::lower_bound(
+							::boost::make_transform_iterator(begin, distFun)
+							, ::boost::make_transform_iterator(end, distFun)
+							, dist).base();
+						if (lower != end_allocated)
+						{
+							auto const& end_ref = (end != end_allocated) ? end + 1 : end_allocated;
+							::std::move_backward(lower, end_ref - 1, end_ref);
+							end = end_ref;
+							*lower = ::std::iterator_traits<ResultIt>::value_type(leaf.data(i), dist);
+							++num_matches;
+						}
+					}
+				}
+				return num_matches;
+			}
+		};
+
+		
 	}
 
-	template<int D, typename T, typename T3D, typename SearchResult>
+	template<int D, typename T, typename T3D, typename Data, typename SearchResult>
 	class KdTree {
-		typedef KdTree<D, T, T3D, SearchResult> Tree;
+		typedef KdTree<D, T, T3D, Data, SearchResult> Tree;
 		typedef Tree Self;
+
+	public:
+		typedef detail::Leaf<D, T, T3D, Data, SearchResult> Leaf;
 
 		struct Index
 		{
@@ -105,49 +208,7 @@ namespace spatial {
 
 		};
 
-		struct Leaf
-		{
-			::std::vector<T3D> bucket;
-			Leaf(int bucketsize)
-			{
-				bucket.reserve(bucketsize);
-			}
 
-			inline int size() const
-			{
-				return int(bucket.size());
-			}
-
-			inline void push_back(T3D const& e)
-			{
-				bucket.push_back(e);
-			}
-
-			inline T3D const& operator[](int i) const
-			{
-				return const_cast<Leaf*>(this)->operator[](i);
-			}
-
-			inline T3D& operator[](int i)
-			{
-				return bucket[i];
-			}
-
-			inline auto begin() const -> decltype(bucket.begin())    { return bucket.begin(); }
-			inline auto end()   const -> decltype(bucket.end  ())    { return bucket.end(); }
-			inline auto begin()       -> decltype(bucket.begin())    { return bucket.begin(); }
-			inline auto end()         -> decltype(bucket.end  ())    { return bucket.end(); }
-
-			Leaf(Leaf&& o)
-				: bucket(::std::move(o.bucket))
-			{
-			}
-
-			Leaf& operator=(Leaf&& o)
-			{
-				::std::swap(bucket, o.bucket);
-			}
-		};
 
 		struct Stem
 		{
@@ -169,8 +230,7 @@ namespace spatial {
 			/** split a leaf node */
 			Stem(int const splitAxis
 				, T const splitValue
-				, Leaf& leaf
-				, Index const ileaf
+				, Index const ioldleaf
 				, int const bucketsize
 				, ::std::vector<Stem>& stems
 				, ::std::vector<Leaf>& leafs
@@ -178,28 +238,33 @@ namespace spatial {
 				: splitAxis(splitAxis)
 				, splitValue(splitValue)
 			{
-				assert(ileaf.is_leaf());
-				assert(leaf.size() % bucketsize == 1);
-
-
-				
+				assert(ioldleaf.is_leaf());
 				//use old leaf as left child
-				children[0] = ileaf;
+				children[0] = ioldleaf;
+				//create new leaf
 				children[1] = Index::make_leaf(leafs.size());
 				leafs.emplace_back(bucketsize);
+				//need to take new pointers
+				auto& lessleaf    = leafs[children[0].from_leaf()];
+				auto& greaterleaf = leafs[children[1].from_leaf()];
+				assert(lessleaf.size() % bucketsize == 1);
+				assert(greaterleaf.size() == 0);
 
-				auto const old = ::std::move(leaf);
-				assert(leaf.size() == 0);
+				auto const old = ::std::move(lessleaf);
 				assert(old.size() % bucketsize == 1);
+				assert(lessleaf.size() == 0);
+				assert(greaterleaf.size() == 0);
 
 
 				//move bucket contents into children
-				for (auto& p: old)
+				for (int i = 0; i < old.size(); ++i)
 				{
-					leafs[get_index(p).from_leaf()].push_back(::std::move(p));
+					auto& p = old[i];
+					auto const less = !is_upper(p);
+					(less ? lessleaf : greaterleaf).push_back(::std::move(p), old.data(i));
 				}
-				assert(leafs[children[0].from_leaf()].size());
-				assert(leafs[children[1].from_leaf()].size());
+				assert(lessleaf.size());
+				assert(greaterleaf.size());
 			}
 
 			~Stem() 
@@ -223,9 +288,15 @@ namespace spatial {
 
 			inline bool is_upper(T3D const& p) const { return p[splitAxis] > splitValue; }
 
-			void Add(T3D const& p, int bucketsize, ::std::vector<Stem>& stems, ::std::vector<Leaf>& leafs)
+			void Add(
+				T3D const& p
+				, Data const& d
+				, int bucketsize
+				, ::std::vector<Stem>& stems
+				, ::std::vector<Leaf>& leafs
+				)
 			{
-				add(p, get_index(p), bucketsize, stems, leafs);
+				add(p, d, get_index(p), bucketsize, stems, leafs);
 			}
 
 			static inline int GetSplitAxis(T3D const& bmin, T3D const& bmax, T& range)
@@ -244,6 +315,7 @@ namespace spatial {
 
 			static inline void add(
 				T3D const& p
+				, Data const& d
 				, Index& child
 				, int bucketsize
 				, ::std::vector<Stem>& stems
@@ -259,7 +331,7 @@ namespace spatial {
 						//so account for that
 						bucketsize *= 2;
 					}
-					bucket.push_back(p);
+					bucket.push_back(p, d);
 
 					auto needs_split = (bucket.size() > bucketsize);
 					if (needs_split)
@@ -289,7 +361,7 @@ namespace spatial {
 							assert(splitValue > bmin[splitAxis]);
 							assert(splitValue < bmax[splitAxis]);
 
-							stems.emplace_back(splitAxis, splitValue, leaf, ileaf, bucketsize, stems, leafs); //make new stem
+							stems.emplace_back(splitAxis, splitValue, ileaf, bucketsize, stems, leafs); //make new stem
 							assert(leafs.size() == stems.size() + 1);
 
 						}
@@ -298,7 +370,7 @@ namespace spatial {
 				}
 				else
 				{
-					stems[child.from_stem()].Add(p, bucketsize, stems, leafs);
+					stems[child.from_stem()].Add(p, d, bucketsize, stems, leafs);
 				}
 			}
 
@@ -313,7 +385,8 @@ namespace spatial {
 
 	public:
 
-		KdTree(int bucketsize = 16, int default_nodes = 256)
+		KdTree(int bucketsize = 8 * 64 * sizeof(char) / sizeof(T3D) // 8 cachelines
+			, int default_nodes = 64)
 			: bucketsize(bucketsize)
 		{
 			assert(bucketsize > 0);
@@ -331,10 +404,10 @@ namespace spatial {
 		{
 		}
 
-		void Add(T3D const& p)
+		void Add(T3D const& p, Data const& d)
 		{
 			assert(leafs.size() == stems.size() + 1);
-			Stem::add(p, child, bucketsize, stems, leafs);
+			Stem::add(p, d, child, bucketsize, stems, leafs);
 			assert(leafs.size() == stems.size() + 1);
 		}
 
@@ -395,7 +468,7 @@ namespace spatial {
 
 				if (tree->child.is_leaf())
 				{
-					return search_leaf(p, get_leaf(tree->child), minDist, begin, end, end_allocated, distFun);
+					return get_leaf(tree->child).search(p, minDist, begin, end, end_allocated, distFun);
 				}
 
 				int num_matches { 0 };
@@ -422,7 +495,7 @@ namespace spatial {
 
 						if (furthestChild.is_leaf())
 						{
-							num_matches += search_leaf(p, get_leaf(furthestChild), minDist, begin, end, end_allocated, distFun);
+							num_matches += get_leaf(furthestChild).search(p, minDist, begin, end, end_allocated, distFun);
 						}
 						else
 						{
@@ -435,7 +508,7 @@ namespace spatial {
 
 						if (nearestChild.is_leaf())
 						{
-							num_matches += search_leaf(p, get_leaf(nearestChild), minDist, begin, end, end_allocated, distFun);
+							num_matches += get_leaf(nearestChild).search(p, minDist, begin, end, end_allocated, distFun);
 						}
 						else
 						{
@@ -481,42 +554,7 @@ namespace spatial {
 				}
 #endif
 			}
-			template <class ResultIt, class DistFun>
-			static inline int search_leaf(
-				T3D const& p
-				, Leaf const& leaf
-				, T minDist
-				, ResultIt const& begin
-				, ResultIt      & end
-				, ResultIt const& end_allocated
-				, DistFun const& distFun
-				)
-			{
-				int num_matches{ 0 };
-				//assert(leaf.size() <= tree->bucketsize);
-				for (int i = 0; i < leaf.size(); ++i)
-				{
-					auto const& o = leaf[i];
-					auto dist = distance(p, o);
 
-					if (dist < minDist) {
-						//search for lowbound in valid matches
-						auto const lower = ::std::lower_bound(
-							::boost::make_transform_iterator(begin, distFun)
-							, ::boost::make_transform_iterator(end, distFun)
-							, dist).base();
-						if (lower != end_allocated)
-						{
-							auto const& end_ref = (end != end_allocated) ? end + 1 : end_allocated;
-							::std::move_backward(lower, end_ref - 1, end_ref);
-							end = end_ref;
-							*lower = ::std::iterator_traits<ResultIt>::value_type(o, dist);
-							++num_matches;
-						}
-					}
-				}
-				return num_matches;
-			}
 
 			Self(Self&& o)
 				: tree(::std::move(o.tree))
