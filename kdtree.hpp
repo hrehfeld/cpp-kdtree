@@ -51,9 +51,22 @@ namespace spatial {
 			MinIndex<float>(distances, length, N, nearestI, minDist);
 		}
 
+		/** 
+			shift a range back by 1, and cut off the last element if necessary 
+			returns the new end
+		*/
+		template <class It>
+		It move_backward_cutoff(It const& begin, It const& end, It const& end_allocated)
+		{
+			auto const& end_ref = (end != end_allocated) ? end + 1 : end_allocated;
+			::std::move_backward(begin, end_ref - 1, end_ref);
+			return end_ref;
+		}
+
 		template<int D, class T, class T3D, class Data, class SearchResult>
 		struct Leaf
 		{
+			//T3D bucket;
 			::std::vector<T3D> bucket;
 			::std::vector<Data> data_bucket;
 
@@ -111,41 +124,71 @@ namespace spatial {
 				::std::swap(data_bucket, o.data_bucket);
 			}
 
-			template <class ResultIt, class DistFun>
-			inline int search(
+			template <class DistIt, class DataIt, class MakeData>
+			/*inline */ void search(
 				T3D const& p
-				, T minDist
-				, ResultIt const& begin
-				, ResultIt      & end
-				, ResultIt const& end_allocated
-				, DistFun const& distFun
+				, T& minDist
+				, DistIt const& begin
+				, DistIt      & end
+				, DistIt const& end_allocated
+				, DataIt const& data_begin
+				, MakeData make_data
 				) const
 			{
-				int num_matches{ 0 };
+				auto const num_allocated = ::std::distance(begin, end_allocated);
 				auto const& leaf = *this;
-				//assert(leaf.size() <= tree->bucketsize);
+
 				for (int i = 0; i < leaf.size(); ++i)
 				{
 					auto const& o = leaf[i];
-					auto dist = distance(p, o);
 
-					if (dist < minDist) {
+					float dist = 0;
+					int j;
+					for (j = 0; j < T3D::dim && dist <= minDist; ++j)
+					{
+						auto const a = p[j] - o[j];
+						dist += a * a;
+					}
+
+					if (dist <= minDist) {
 						//search for lowbound in valid matches
-						auto const lower = ::std::lower_bound(
-							::boost::make_transform_iterator(begin, distFun)
-							, ::boost::make_transform_iterator(end, distFun)
-							, dist).base();
+#if 0 //1.61m
+						auto const lower = ::std::upper_bound(begin, end, dist);
+#elif 1 //1.55m
+						//linear search
+						auto lower = begin;
+						for (; lower != end && *lower < dist; ++lower)
+						{
+						}
+#else //1.54m
+						//linear search with one step of binary search
+						auto const n = ::std::distance(begin, end);
+						auto const half = (n / 2);
+						auto lower = *(begin + half) <= dist ? begin + half : begin;
+						for (; lower != end && *lower <= dist; ++lower)
+						{
+						}
+#endif
 						if (lower != end_allocated)
 						{
-							auto const& end_ref = (end != end_allocated) ? end + 1 : end_allocated;
-							::std::move_backward(lower, end_ref - 1, end_ref);
-							end = end_ref;
-							*lower = ::std::iterator_traits<ResultIt>::value_type(leaf.data(i), dist);
-							++num_matches;
+							//move back
+							auto const num_lower = ::std::distance(begin, lower);
+							move_backward_cutoff(
+								  data_begin + num_lower
+								, data_begin + ::std::distance(begin, end)
+								, data_begin + num_allocated
+								);
+							end = move_backward_cutoff(lower, end, end_allocated);
+							//insert
+							*lower = dist;
+							data_begin[num_lower] = make_data(leaf.data(i));
 						}
+						//if (end == end_allocated)
+						//{
+						//	minDist = *(end_allocated - 1);
+						//}
 					}
 				}
-				return num_matches;
 			}
 		};
 
@@ -164,45 +207,40 @@ namespace spatial {
 		{
 		private:
 			int i;
-			bool leaf;
 
 		public:
 			Index()
 			{
 			}
 		private:
-			Index(int i, bool leaf)
+			Index(int i)
 				: i(i)
-				, leaf(leaf)
 			{
 			}
 		public:
 
 			static inline Index make_leaf(int i)
 			{
-				return Index(-(i + 1), true);
+				return Index(-(i + 1));
 			}
 			static inline Index make_stem(int i)
 			{
-				return Index(i, false);
+				return Index(i);
 			}
 			inline int from_leaf() const
 			{
 				assert(i < 0);
-				assert(leaf == i < 0);
 				return -i - 1;
 			}
 
 			inline bool is_leaf() const
 			{
-				assert(leaf == i < 0);
 				return i < 0;
 			}
 
 			inline int from_stem() const
 			{
 				assert(i >= 0);
-				assert(!leaf);
 				return i;
 			}
 
@@ -239,7 +277,7 @@ namespace spatial {
 				, splitValue(splitValue)
 			{
 				assert(ioldleaf.is_leaf());
-				//use old leaf as left child
+				//use old leaf as lower child
 				children[0] = ioldleaf;
 				//create new leaf
 				children[1] = Index::make_leaf(leafs.size());
@@ -271,11 +309,11 @@ namespace spatial {
 			{
 			}
 
-			inline Index left() const
+			inline Index lower() const
 			{
 				return children[0];
 			}
-			inline Index right() const
+			inline Index upper() const
 			{
 				return children[1];
 			}
@@ -382,10 +420,13 @@ namespace spatial {
 		::std::vector<Stem> stems;
 		::std::vector<Leaf> leafs;
 		Index child;
-
 	public:
-
-		KdTree(int bucketsize = 8 * 64 * sizeof(char) / sizeof(T3D) // 8 cachelines
+		static int const CACHELINE_SIZE = 64 * sizeof(uint8_t);
+		//8: 31.0550s
+		//4: 31.9290s
+		//12: 35.2570s
+		//16: 38.2130s
+		KdTree(int bucketsize = CACHELINE_SIZE * 8 / sizeof(T3D) 
 			, int default_nodes = 64)
 			: bucketsize(bucketsize)
 		{
@@ -436,7 +477,7 @@ namespace spatial {
 	public:
 		class Search {
 			typedef Search Self;
-
+			static int const search_stack_size = 64;
 			//only used for speedup
 			mutable std::vector<float> searchMem;
 			Tree const* tree;
@@ -453,40 +494,42 @@ namespace spatial {
 			//	return
 			//}
 
-			template <class ResultIt, class DistFun>
-			int NearestNeighbour(T3D const& p
-				, ResultIt const& begin
-				, ResultIt        end
-				, ResultIt const& end_allocated
-				, DistFun const& distFun
+			template <class DistIt, class DataIt, class MakeData>
+			void NearestNeighbour(T3D const& p
+				, DistIt const& begin
+				, DistIt      & end
+				, DistIt const& end_allocated
+				, DataIt const& data_begin
+				, MakeData make_data
 				, T const max_distance = ::std::numeric_limits<T>::max()
 				) const
 			{
 				auto minDist = max_distance;
 
-				auto const get_leaf = [=](Index i) { return tree->leafs[i.from_leaf()]; };
+				auto const get_leaf = [this](Index const& i) {
+					return tree->leafs[i.from_leaf()]; 
+				};
 
 				if (tree->child.is_leaf())
 				{
-					return get_leaf(tree->child).search(p, minDist, begin, end, end_allocated, distFun);
+					get_leaf(tree->child).search(p, minDist, begin, end, end_allocated, data_begin, make_data);
+					return;
 				}
 
-				int num_matches { 0 };
-
 				std::vector<Stem const*> stack;
-				stack.reserve(256);
+				stack.reserve(search_stack_size);
 
 				stack.push_back(&tree->stems[tree->child.from_stem()]);
 				while (!stack.empty())
 				{
-					auto const& stem = *stack.back();
+					auto const stem = *stack.back();
 					stack.pop_back();
 
 					{
+						//splitdist > 0 -> we're higher than splitplane
+						auto nearestChild  = stem.upper();
+						auto furthestChild = stem.lower();
 						float splitDist = p[stem.splitAxis] - stem.splitValue;
-						auto nearestChild  = stem.left();
-						auto furthestChild = stem.right();
-						//IsLeft()
 						if (splitDist < 0) {
 							::std::swap(nearestChild, furthestChild);
 							splitDist = -splitDist;
@@ -495,12 +538,12 @@ namespace spatial {
 
 						if (furthestChild.is_leaf())
 						{
-							num_matches += get_leaf(furthestChild).search(p, minDist, begin, end, end_allocated, distFun);
+							get_leaf(furthestChild).search(p, minDist, begin, end, end_allocated, data_begin, make_data);
 						}
 						else
 						{
 							//discard further child if distance of p to split plane is already larger than the best neighbour found so far
-							//if (splitDist < minDist)
+							if (splitDist <= minDist)
 							{
 								stack.push_back(&tree->stems[furthestChild.from_stem()]);
 							}
@@ -508,7 +551,7 @@ namespace spatial {
 
 						if (nearestChild.is_leaf())
 						{
-							num_matches += get_leaf(nearestChild).search(p, minDist, begin, end, end_allocated, distFun);
+							get_leaf(nearestChild).search(p, minDist, begin, end, end_allocated, data_begin, make_data);
 						}
 						else
 						{
@@ -517,8 +560,6 @@ namespace spatial {
 						}
 					}
 				}
-				return num_matches;
-
 #if 0
 				auto curNode = this;
 				float dist = 0;
