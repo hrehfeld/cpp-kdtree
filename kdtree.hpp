@@ -452,10 +452,10 @@ namespace spatial {
 			assert(leafs.size() == stems.size() + 1);
 		}
 
-		Self(Self&& o)
+		KdTree(Self&& o)
 			: bucketsize(::std::move( o.bucketsize))
-			, leafs(::std::move(o.leafs))
 			, stems(::std::move(o.stems))
+			, leafs(::std::move(o.leafs))
 			, child(::std::move(o.child))
 		{
 		}
@@ -466,10 +466,11 @@ namespace spatial {
 			::std::swap(leafs, o.leafs);
 			::std::swap(stems, o.stems);
 			::std::swap(child, o.child);
+			return *this;
 		}
 
 	private:
-		Self(Self const& o);
+		KdTree(Self const& o);
 		Self& operator=(Self const& o);
 
 
@@ -478,21 +479,12 @@ namespace spatial {
 		class Search {
 			typedef Search Self;
 			static int const search_stack_size = 64;
-			//only used for speedup
-			mutable std::vector<float> searchMem;
 			Tree const* tree;
 
 		public:
 			Search(Tree const* tree)
-				: searchMem(tree->bucketsize)
-				, tree(tree)
+				: tree(tree)
 			{}
-
-			//T3D NearestNeighbour(T3D const& p) const
-			//{
-			//	T3D r;
-			//	return
-			//}
 
 			template <class DistIt, class DataIt, class MakeData>
 			void NearestNeighbour(T3D const& p
@@ -506,7 +498,7 @@ namespace spatial {
 			{
 				auto minDist = max_distance;
 
-				auto const get_leaf = [this](Index const& i) {
+				auto const get_leaf = [this](Index const& i) -> Leaf const& {
 					return tree->leafs[i.from_leaf()]; 
 				};
 
@@ -597,16 +589,15 @@ namespace spatial {
 			}
 
 
-			Self(Self&& o)
+			Search(Self&& o)
 				: tree(::std::move(o.tree))
-				, searchMem(::std::move(o.searchMem))
 			{
 			}
 
 			Self& operator=(Self&& o)
 			{
 				::std::swap(tree, o.tree);
-				::std::swap(searchMem, o.searchMem);
+				return *this;
 			}
 
 		};
