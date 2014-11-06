@@ -3,54 +3,6 @@
 namespace spatial {
 
 	namespace detail {
-		template <typename T>
-		int MinIndex(T const* const seq, int const length, int N, int* minIndex, T* min) {
-			for (int i = 0; i < N; ++i)
-			{
-				min[i] = ::std::numeric_limits<T>::max();
-				minIndex[i] = -1;
-			}
-
-			for (int i = 0; i < length; ++i)
-			{
-				for (int j = 0; j < N; ++j)
-				{
-					if (seq[i] < min[j])
-					{
-						for (int h = N - 1; h > j; --h)
-						{
-							min[h] = min[h - 1];
-							minIndex[h] = minIndex[h - 1];
-						}
-						min[j] = seq[i];
-						minIndex[j] = i;
-						break;
-					}
-				}
-			}
-			return minIndex[0];
-		}
-
-
-		template<typename T>
-		void FindNearest(
-			T const* const list
-			, int const length
-			, T const& p
-			, int N
-			, int* nearestI
-			, float* minDist
-			, float* distances
-			)
-		{
-			assert(length > 0);
-			//#pragma omp parallel for schedule(static, 16) //default(none) shared(distances)
-			for (int i = 0; i < length; ++i)
-				distances[i] = distance(list[i], p);
-
-			MinIndex<float>(distances, length, N, nearestI, minDist);
-		}
-
 		/** 
 			shift a range back by 1, and cut off the last element if necessary 
 			returns the new end
