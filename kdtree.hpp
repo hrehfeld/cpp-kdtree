@@ -124,7 +124,10 @@ namespace spatial {
 				::std::swap(data_bucket, o.data_bucket);
 			}
 
-			template <class DistIt, class DataIt, class MakeData>
+			/**
+			DistanceFun receives two T3D indices, and the maximum valid distance
+			*/
+			template <class DistIt, class DataIt, class MakeData, class DistanceFun>
 			/*inline */ void search(
 				T3D const& p
 				, T& minDist
@@ -133,6 +136,7 @@ namespace spatial {
 				, DistIt const& end_allocated
 				, DataIt const& data_begin
 				, MakeData make_data
+				, DistanceFun distance
 				) const
 			{
 				auto const num_allocated = ::std::distance(begin, end_allocated);
@@ -142,13 +146,7 @@ namespace spatial {
 				{
 					auto const& o = leaf[i];
 
-					float dist = 0;
-					int j;
-					for (j = 0; j < T3D::dim && dist <= minDist; ++j)
-					{
-						auto const a = p[j] - o[j];
-						dist += a * a;
-					}
+					float dist = distance(p, o, minDist);
 
 					if (dist <= minDist) {
 						//search for lowbound in valid matches
@@ -486,7 +484,7 @@ namespace spatial {
 				: tree(tree)
 			{}
 
-			template <class DistIt, class DataIt, class MakeData>
+			template <class DistIt, class DataIt, class MakeData, class DistanceFun>
 			void NearestNeighbour(T3D const& p
 				, DistIt const& begin
 				, DistIt      & end
@@ -494,6 +492,15 @@ namespace spatial {
 				, DataIt const& data_begin
 				, MakeData make_data
 				, T const max_distance = ::std::numeric_limits<T>::max()
+				, DistanceFun distance = [&] (T3D const& p, T3D const& o, T minDist) {
+						float dist = 0;
+						for (int j = 0; j < T3D::dim && dist <= minDist; ++j)
+						{
+							auto const a = p[j] - o[j];
+							dist += a * a;
+						}
+						return dist;
+					}
 				) const
 			{
 				auto minDist = max_distance;
@@ -504,7 +511,7 @@ namespace spatial {
 
 				if (tree->child.is_leaf())
 				{
-					get_leaf(tree->child).search(p, minDist, begin, end, end_allocated, data_begin, make_data);
+					get_leaf(tree->child).search(p, minDist, begin, end, end_allocated, data_begin, make_data, distance);
 					return;
 				}
 
@@ -530,7 +537,7 @@ namespace spatial {
 
 						if (furthestChild.is_leaf())
 						{
-							get_leaf(furthestChild).search(p, minDist, begin, end, end_allocated, data_begin, make_data);
+							get_leaf(furthestChild).search(p, minDist, begin, end, end_allocated, data_begin, make_data, distance);
 						}
 						else
 						{
@@ -543,7 +550,7 @@ namespace spatial {
 
 						if (nearestChild.is_leaf())
 						{
-							get_leaf(nearestChild).search(p, minDist, begin, end, end_allocated, data_begin, make_data);
+							get_leaf(nearestChild).search(p, minDist, begin, end, end_allocated, data_begin, make_data, distance);
 						}
 						else
 						{
