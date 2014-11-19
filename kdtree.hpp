@@ -98,7 +98,7 @@ namespace spatial {
 				{
 					auto const& o = leaf[i];
 
-					float dist = distance(p, o, minDist);
+					float const dist = distance(p, o, minDist);
 
 					if (dist <= minDist) {
 						//search for lowbound in valid matches
@@ -121,7 +121,7 @@ namespace spatial {
 #endif
 						if (lower != end_allocated)
 						{
-							auto const num_lower = ::std::distance(begin, lower);
+							auto const num_lower = int(::std::distance(begin, lower));
 							end = move_backward_cutoff(lower, end, end_allocated);
 							*lower = dist;
 							
@@ -224,7 +224,7 @@ namespace spatial {
 				//use old leaf as lower child
 				children[0] = ioldleaf;
 				//create new leaf
-				children[1] = Index::make_leaf(leafs.size());
+				children[1] = Index::make_leaf(int(leafs.size()));
 				leafs.emplace_back(bucketsize);
 				//need to take new pointers
 				auto& lessleaf    = leafs[children[0].from_leaf()];
@@ -337,7 +337,7 @@ namespace spatial {
 						if (range > ::std::numeric_limits<T>::epsilon())
 						{
 							auto const ileaf = child;
-							child = Index::make_stem(stems.size());
+							child = Index::make_stem(int(stems.size()));
 
 							auto splitValue = bmin[splitAxis] + range / T(2);
 							assert(splitValue > bmin[splitAxis]);
@@ -380,7 +380,7 @@ namespace spatial {
 			stems.reserve(default_nodes);
 			leafs.reserve(default_nodes);
 
-			child = Index::make_leaf(leafs.size());
+			child = Index::make_leaf(int(leafs.size()));
 			leafs.emplace_back(bucketsize);
 		}
 
@@ -438,13 +438,11 @@ namespace spatial {
 				, MakeData make_data
 				, T const max_distance = ::std::numeric_limits<T>::max()
 				, DistanceFun distance = [&] (T3D const& p, T3D const& o, T minDist) {
-						float dist = 0;
-						for (int j = 0; j < T3D::dim && dist <= minDist; ++j)
-						{
-							auto const a = p[j] - o[j];
-							dist += a * a;
-						}
-						return dist;
+					float dist = 0;
+					for (int j = 0; j < T3D::dim && dist <= minDist; ++j)
+					{
+						auto const a = p[j] - o[j];
+						dist += a * a;
 					}
 					return dist;
 				}
