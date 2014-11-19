@@ -430,7 +430,7 @@ namespace spatial {
 				: tree(tree)
 			{}
 
-			template <class DistIt, class MakeData, class DistanceFun>
+			template <class DistIt, class MakeData, class DistanceFun, class DistanceBoundFun>
 			void NearestNeighbour(T3D const& p
 				, DistIt const& begin
 				, DistIt      & end
@@ -446,6 +446,15 @@ namespace spatial {
 						}
 						return dist;
 					}
+					return dist;
+				}
+				/** 
+				Distance to splitplane and point is at least this big
+				This must match the Distance fun for correct results!
+				*/
+				, DistanceBoundFun distanceBound = [] (int const dim, T const splitPlane, T3D const& p, T const splitDist) {
+					return splitDist;
+				}
 				) const
 			{
 				auto minDist = max_distance;
@@ -487,7 +496,8 @@ namespace spatial {
 						else
 						{
 							//discard further child if distance of p to split plane is already larger than the best neighbour found so far
-							if (splitDist <= minDist)
+							auto const bound = distanceBound(stem.splitAxis, stem.splitValue, p, splitDist);
+							if (bound <= minDist)
 							{
 								stack.push_back(&tree->stems[furthestChild.from_stem()]);
 							}
