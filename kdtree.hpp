@@ -93,7 +93,8 @@ namespace spatial {
 				auto const num_allocated = ::std::distance(begin, end_allocated);
 				auto const& leaf = *this;
 
-				for (int i = 0; i < leaf.size(); ++i)
+				int const size = leaf.size();
+				for (int i = 0; i < size; ++i)
 				{
 					auto const& o = leaf[i];
 
