@@ -465,7 +465,7 @@ namespace spatial {
 				stack.push_back(&tree->stems[tree->child.from_stem()]);
 				while (!stack.empty())
 				{
-					auto const stem = *stack.back();
+					auto const stem = ::std::move(*stack.back());
 					stack.pop_back();
 
 					{
