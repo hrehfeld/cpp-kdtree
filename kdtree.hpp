@@ -1,4 +1,4 @@
-
+#include <algorithm>
 #include <numeric>
 namespace spatial {
 
@@ -137,6 +137,51 @@ namespace spatial {
 		};
 
 		
+	}
+
+	namespace distance
+	{
+		template <int D, typename T, typename T3D>
+		T chi_squared(T3D const& a, T3D const& b, T const minDist)
+		{
+			auto sum = T(0);
+			for (int i = 0; i < D; ++i)
+			{
+				auto const diff = (a[i] - b[i]);
+				sum += diff * diff / (a[i] + b[i]) * 0.5f;
+			}
+			return sum;
+		}
+		namespace bound
+		{
+			template <typename T, typename T3D>
+			T chi_squared(int const dim, T const splitPlane, T3D const& p, T const splitDist)
+			{
+				return splitDist * splitDist / (p[dim] + splitPlane) * 0.5f;
+			}
+		}
+
+
+		template <int D, typename T, typename T3D>
+		T euclidean(T3D const& p, T3D const& o, T const minDist)
+		{
+			float dist = 0;
+			for (int j = 0; j < T3D::dim && dist <= minDist; ++j)
+			{
+				auto const a = p[j] - o[j];
+				dist += a * a;
+			}
+			return dist;
+		}
+		namespace bound
+		{
+			template <typename T, typename T3D>
+			T euclidean(int const dim, T const splitPlane, T3D const& p, T const splitDist)
+			{
+				return splitDist;
+			}
+		}
+
 	}
 
 	template<int D, typename T, typename T3D, typename Data, typename SearchResult>
@@ -430,29 +475,19 @@ namespace spatial {
 				: tree(tree)
 			{}
 
-			template <class DistIt, class MakeData, class DistanceFun, class DistanceBoundFun>
+			template <class DistIt, class MakeData, class DistanceFun = distance::euclidean, class DistanceBoundFun = distance::bound::euclidean>
 			void NearestNeighbour(T3D const& p
 				, DistIt const& begin
 				, DistIt      & end
 				, DistIt const& end_allocated
 				, MakeData make_data
 				, T const max_distance = ::std::numeric_limits<T>::max()
-				, DistanceFun distance = [&] (T3D const& p, T3D const& o, T minDist) {
-					float dist = 0;
-					for (int j = 0; j < T3D::dim && dist <= minDist; ++j)
-					{
-						auto const a = p[j] - o[j];
-						dist += a * a;
-					}
-					return dist;
-				}
+				, DistanceFun distance = distance::euclidean
 				/** 
 				Distance to splitplane and point is at least this big
 				This must match the Distance fun for correct results!
 				*/
-				, DistanceBoundFun distanceBound = [] (int const dim, T const splitPlane, T3D const& p, T const splitDist) {
-					return splitDist;
-				}
+				, DistanceBoundFun distanceBound = distance::bound::euclidean
 				) const
 			{
 				auto minDist = max_distance;
