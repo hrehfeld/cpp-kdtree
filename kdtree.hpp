@@ -475,7 +475,7 @@ namespace spatial {
 				: tree(tree)
 			{}
 
-			template <class DistIt, class MakeData, class DistanceFun = distance::euclidean, class DistanceBoundFun = distance::bound::euclidean>
+			template <class DistIt, class MakeData, class DistanceFun, class DistanceBoundFun>
 			void NearestNeighbour(T3D const& p
 				, DistIt const& begin
 				, DistIt      & end
