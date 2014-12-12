@@ -90,7 +90,6 @@ namespace spatial {
 				, DistanceFun distance
 				) const
 			{
-				auto const num_allocated = ::std::distance(begin, end_allocated);
 				auto const& leaf = *this;
 
 				int const size = leaf.size();
